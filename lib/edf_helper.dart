@@ -10,9 +10,14 @@ import 'edf_lib.dart';
 import 'vital_data_records.dart';
 
 class EDFHelper {
-  static Future<File?> createMultiSignalEdf(String filePath) async {
+  /// Creates a multi-signal EDF file from O2Ring or mock data
+  static Future<File?> createMultiSignalEdf(
+      String filePath, {
+        List<VitalDataRecord> collectedVitals = const [],
+      }) async {
     try {
       final pathPtr = filePath.toNativeUtf8();
+
       // Define signals per spec
       final signals = [
         // label, unit, fs, physMin, physMax, digMin, digMax
@@ -31,6 +36,7 @@ class EDFHelper {
         ('PPG-2', 'N/A', 100, -100.0, 100.0, -32768, 32767),
       ];
 
+      // Open EDF file
       final handle = edfOpenFileWriteonly(
         pathPtr,
         EDFLIB_FILETYPE_EDFPLUS,
@@ -43,7 +49,7 @@ class EDFHelper {
         return null;
       }
 
-      // Set recording start time and datarecord duration (1 second)
+      // Set start time and datarecord duration (1 second)
       final start = DateTime.now();
       edfSetStartdatetime(
         handle,
@@ -60,11 +66,12 @@ class EDFHelper {
       final patientPtr = 'SleepMD'.toNativeUtf8();
       edfSetPatientname(handle, patientPtr);
       calloc.free(patientPtr);
-      final recPtr = 'O2 Ring mock multi-signal'.toNativeUtf8();
+
+      final recPtr = 'O2 Ring multi-signal'.toNativeUtf8();
       edfSetRecordingAdditional(handle, recPtr);
       calloc.free(recPtr);
 
-      // Set per-signal params
+      // Set per-signal parameters
       for (int s = 0; s < signals.length; s++) {
         final (label, unit, fs, physMin, physMax, digMin, digMax) = signals[s];
         final labelPtr = label.toNativeUtf8();
@@ -76,101 +83,109 @@ class EDFHelper {
         edfSetPhysicalMaximum(handle, s, physMax);
         edfSetDigitalMinimum(handle, s, digMin);
         edfSetDigitalMaximum(handle, s, digMax);
-        final unitPtr = (unit == 'N/A'
-            ? ''.toNativeUtf8()
-            : unit.toNativeUtf8());
+
+        final unitPtr = (unit == 'N/A' ? ''.toNativeUtf8() : unit.toNativeUtf8());
         edfSetPhysicalDimension(handle, s, unitPtr);
         calloc.free(unitPtr);
       }
 
-      // Duration and write loop: generate 10 seconds
-      const seconds = 10;
+      // Determine number of seconds
+      final seconds = collectedVitals.isNotEmpty ? collectedVitals.length : 10;
+      final random = Math.Random();
 
-      // For blockwrite we must interleave per record: n samples of s0, then s1, ...
-      // Determine total samples per record (sum of each fs)
-      int totalSamplesPerRecord = 0;
-      for (final sig in signals) {
-        totalSamplesPerRecord += sig.$3; // fs
-      }
-
+      // Determine total samples per record
+      final totalSamplesPerRecord = signals.fold<int>(0, (sum, sig) => sum + sig.$3);
       final recordBuf = calloc<Int16>(totalSamplesPerRecord);
 
+      // Start writing each second
       for (int sec = 0; sec < seconds; sec++) {
         int offset = 0;
+        final record = collectedVitals.isNotEmpty ? collectedVitals[sec] : null;
+
         for (int s = 0; s < signals.length; s++) {
-          final (label, unit, fs, physMin, physMax, digMin, digMax) =
-              signals[s];
-          // generate mock waveform per signal
+          final (label, unit, fs, physMin, physMax, digMin, digMax) = signals[s];
+
           for (int i = 0; i < fs; i++) {
             double phys;
-            switch (label) {
-              case 'EEG O1-A2':
-              case 'EEG O2-A1':
-              case 'EOG ROC-A2':
-                phys =
-                    50.0 *
-                    Math.sin(2 * Math.pi * (i / fs) * 10.0); // microvolt osc
-                break;
-              case 'Snore':
-                phys = (i % 200 < 5) ? 80.0 : 10.0; // spikes
-                break;
-              case 'Flow Patient':
-                phys = 500.0 * Math.sin(2 * Math.pi * (i / fs) * 0.3);
-                break;
-              case 'Effort THO':
-                phys = 50.0 * Math.sin(2 * Math.pi * (i / fs) * 0.3 + 1.0);
-                break;
-              case 'SpO2':
-                phys = 96.0 + ((sec % 5) == 4 ? -1.0 : 0.0);
-                break;
-              case 'SpO2-2':
-                phys = 95.5 + ((sec % 6) == 5 ? -1.0 : 0.0);
-                break;
-              case 'Body':
-                phys = (sec < seconds / 2) ? 96.0 : 128.0; // two positions
-                break;
-              case 'PulseRate':
-                phys = 65.0 + (sec % 10);
-                break;
-              case 'PulseRate-2':
-                phys = 66.0 + (sec % 9);
-                break;
-              case 'PPG':
-                phys = 60.0 * Math.sin(2 * Math.pi * (i / fs) * 1.2);
-                break;
-              case 'PPG-2':
-                phys = 55.0 * Math.sin(2 * Math.pi * (i / fs) * 1.2 + 0.5);
-                break;
-              default:
+
+            if (record != null) {
+              // Cast any dynamic lists to List<double> to avoid type issues
+              final ppgSignal = record.ppgSignal.cast<double>();
+              final ecgSignal = record.ecgSignal.cast<double>();
+
+              final recordMap = {
+                'SpO2': record.spo2.toDouble(),
+                'PulseRate': record.heartRate.toDouble(),
+                'PPG': ppgSignal,
+                'PPG-2': ppgSignal, // if you have multiple channels
+                // You can extend for ECG or other fields if needed
+              };
+
+              final value = recordMap[label];
+              if (value is List<double>) {
+                phys = i < value.length ? value[i] : 0.0;
+              } else if (value is num) {
+                phys = value.toDouble();
+              } else {
                 phys = 0.0;
+              }
+            } else {
+              // Mock waveform generation
+              final t = i / fs;
+              switch (label) {
+                case 'EEG O1-A2':
+                case 'EEG O2-A1':
+                case 'EOG ROC-A2':
+                  phys = 50.0 * Math.sin(2 * Math.pi * t * 10.0);
+                  break;
+                case 'Snore':
+                  phys = (i % 200 < 5) ? 80.0 : 10.0;
+                  break;
+                case 'Flow Patient':
+                  phys = 500.0 * Math.sin(2 * Math.pi * t * 0.3);
+                  break;
+                case 'Effort THO':
+                  phys = 50.0 * Math.sin(2 * Math.pi * t * 0.3 + 1.0);
+                  break;
+                case 'SpO2':
+                  phys = 96.0 + ((sec % 5) == 4 ? -1.0 : 0.0);
+                  break;
+                case 'SpO2-2':
+                  phys = 95.5 + ((sec % 6) == 5 ? -1.0 : 0.0);
+                  break;
+                case 'Body':
+                  phys = (sec < seconds / 2) ? 96.0 : 128.0;
+                  break;
+                case 'PulseRate':
+                  phys = 65.0 + (sec % 10);
+                  break;
+                case 'PulseRate-2':
+                  phys = 66.0 + (sec % 9);
+                  break;
+                case 'PPG':
+                  phys = 60.0 * Math.sin(2 * Math.pi * t * 1.2);
+                  break;
+                case 'PPG-2':
+                  phys = 55.0 * Math.sin(2 * Math.pi * t * 1.2 + 0.5);
+                  break;
+                default:
+                  phys = 0.0;
+              }
             }
-            // map physical to digital
-            final mapped =
-                (digMin +
-                        (phys - physMin) *
-                            (digMax - digMin) /
-                            (physMax - physMin))
-                    .round();
+
+            // Map physical to digital
+            final mapped = (digMin + (phys - physMin) * (digMax - digMin) / (physMax - physMin))
+                .round();
             recordBuf[offset + i] = mapped.clamp(-32768, 32767);
           }
+
           offset += fs;
         }
 
+        // Write this second
         final w = edfBlockwriteDigitalShortSamples(handle, recordBuf);
         if (w != 0) {
           print('edfBlockwriteDigitalShortSamples failed with $w at sec $sec');
-        }
-
-        // Optional: write a per-second annotation on first and last record
-        if (sec == 0) {
-          final desc = 'Recording starts'.toNativeUtf8();
-          edfwriteAnnotationUtf8Hr(handle, 0, -1, desc);
-          calloc.free(desc);
-        }
-        if (sec == seconds - 1) {
-          final desc = 'Recording ends'.toNativeUtf8();
-          edfwriteAnnotationUtf8Hr(handle, seconds * 1000000, -1, desc);
-          calloc.free(desc);
         }
       }
 
@@ -190,10 +205,8 @@ class EDFHelper {
   }
 
   /// Creates an EDF file using data from a list of VitalDataRecords.
-  static Future<File?> createEdfFromDeviceData(
-    String filePath,
-    List<VitalDataRecord> records,
-  ) async {
+  static Future<File?> createEdfFromDeviceData(String filePath,
+      List<VitalDataRecord> records,) async {
     // if (records.isEmpty) {
     //   print('No data records provided.');
     //   return null;
@@ -321,21 +334,21 @@ class EDFHelper {
           if (label == 'SpO2') {
             final phys = rec.spo2 >= 0 ? rec.spo2.toDouble() : 0.0;
             final mapped =
-                (digMin +
-                        (phys - physMin) *
-                            (digMax - digMin) /
-                            (physMax - physMin))
-                    .round();
+            (digMin +
+                (phys - physMin) *
+                    (digMax - digMin) /
+                    (physMax - physMin))
+                .round();
             recordBuf[offset] = mapped.clamp(digMin, digMax);
             offset += fs;
           } else if (label == 'PulseRate') {
             final phys = rec.heartRate >= 0 ? rec.heartRate.toDouble() : 0.0;
             final mapped =
-                (digMin +
-                        (phys - physMin) *
-                            (digMax - digMin) /
-                            (physMax - physMin))
-                    .round();
+            (digMin +
+                (phys - physMin) *
+                    (digMax - digMin) /
+                    (physMax - physMin))
+                .round();
             recordBuf[offset] = mapped.clamp(digMin, digMax);
             offset += fs;
           } else if (label == 'PPG') {
@@ -344,11 +357,11 @@ class EDFHelper {
             for (int i = 0; i < fs; i++) {
               double phys = i < n ? ppg[i] : 0.0;
               final mapped =
-                  (digMin +
-                          (phys - physMin) *
-                              (digMax - digMin) /
-                              (physMax - physMin))
-                      .round();
+              (digMin +
+                  (phys - physMin) *
+                      (digMax - digMin) /
+                      (physMax - physMin))
+                  .round();
               recordBuf[offset + i] = mapped.clamp(digMin, digMax);
             }
             offset += fs;
@@ -358,11 +371,11 @@ class EDFHelper {
             for (int i = 0; i < fs; i++) {
               double phys = i < n ? ecg[i] : 0.0;
               final mapped =
-                  (digMin +
-                          (phys - physMin) *
-                              (digMax - digMin) /
-                              (physMax - physMin))
-                      .round();
+              (digMin +
+                  (phys - physMin) *
+                      (digMax - digMin) /
+                      (physMax - physMin))
+                  .round();
               recordBuf[offset + i] = mapped.clamp(digMin, digMax);
             }
             offset += fs;
@@ -387,7 +400,13 @@ class EDFHelper {
   }
 
 
-  static Future<File?> createO2RingEdf(String filePath) async {
+
+  /// Creates an EDF file from O2Ring data.
+  /// Uses collectedVitals if provided, otherwise generates mock data.
+  static Future<File?> createO2RingEdf(
+      String filePath, {
+        List<VitalDataRecord> collectedVitals = const [],
+      }) async {
     try {
       // Ensure directory exists
       final file = File(filePath);
@@ -400,10 +419,8 @@ class EDFHelper {
       print('Creating EDF file at: $filePath');
 
       final pathPtr = filePath.toNativeUtf8();
-      print('Creating EDF file at: $pathPtr');
 
-      // Define signals for standard EDF (no annotation channel)
-      // Format: (label, unit, fs, physMin, physMax, digMin, digMax)
+      // Define signals: (label, unit, fs, physMin, physMax, digMin, digMax)
       final signals = [
         ('spo2', '%', 10, 0.0, 100.0, 0, 100),
         ('pulse', 'bpm', 10, 0.0, 100, 0, 100),
@@ -412,36 +429,30 @@ class EDFHelper {
         ('signal_quality', '%', 10, 0.0, 100, 0, 100),
         ('sensor_status', '', 10, 0.0, 100, 0, 100),
         ('heart_rate_varia', 'ms', 10, -100, 100, -100, 100),
-        ('ppg', 'mV',125, 0, 255, 0, 255),
+        ('ppg', 'mV', 125, 0, 255, 0, 255),
         ('derived_effort', 'units', 10, -100, 100, -100, 100),
         ('derived_flow', 'LPM', 10, -100, 100, -100, 100),
       ];
 
-      print('Opening EDF file with ${signals.length} signals...');
-      // Try using the simpler edfOpenFileWriteonlyWithParams first
+      // Open EDF file
       final handle = edfOpenFileWriteonlyWithParams(
         pathPtr,
         EDFLIB_FILETYPE_EDFPLUS,
         signals.length,
         10,
         100,
-        ''.toNativeUtf8(), // phys dimension (will be overridden per signal)
+        ''.toNativeUtf8(),
       );
       calloc.free(pathPtr);
 
       if (handle < 0) {
         print('Failed to open EDF for write: $handle');
-        print(
-          'Error codes: -1=file already exists, -2=can\'t write to file, -3=file not found, -4=invalid header, -5=invalid file type, -6=invalid number of signals, -7=invalid file name',
-        );
         return null;
       }
 
-      print('EDF file opened successfully with handle: $handle');
-
-      // Set recording start time and datarecord duration (1 second)
+      // Set start time
       final start = DateTime.now();
-      final startResult = edfSetStartdatetime(
+      edfSetStartdatetime(
         handle,
         start.year,
         start.month,
@@ -450,173 +461,128 @@ class EDFHelper {
         start.minute,
         start.second,
       );
-      if (startResult != 0) {
-        print('Warning: edfSetStartdatetime returned $startResult');
-      }
+      edfSetDatarecordDuration(handle, 1);
 
-      final durationResult = edfSetDatarecordDuration(handle, 1);
-      if (durationResult != 0) {
-        print('Warning: edfSetDatarecordDuration returned $durationResult');
-      }
-
-      // Set simple metadata for standard EDF
+      // Set patient metadata
       final patientPtr = 'Patient_O2Ring'.toNativeUtf8();
-      final patientResult = edfSetPatientname(handle, patientPtr);
+      edfSetPatientname(handle, patientPtr);
       calloc.free(patientPtr);
-      if (patientResult != 0) {
-        print('Warning: edfSetPatientname returned $patientResult');
-      }
 
       final recPtr = 'O2Ring Recording'.toNativeUtf8();
-      final recResult = edfSetRecordingAdditional(handle, recPtr);
+      edfSetRecordingAdditional(handle, recPtr);
       calloc.free(recPtr);
-      if (recResult != 0) {
-        print('Warning: edfSetRecordingAdditional returned $recResult');
-      }
 
-      print('Setting signal parameters...');
-      // Set per-signal parameters
+      // Set signal parameters
       for (int s = 0; s < signals.length; s++) {
         final (label, unit, fs, physMin, physMax, digMin, digMax) = signals[s];
         final labelPtr = label.toNativeUtf8();
-        final labelResult = edfSetLabel(handle, s, labelPtr);
+        edfSetLabel(handle, s, labelPtr);
         calloc.free(labelPtr);
-        if (labelResult != 0) {
-          print(
-            'Warning: edfSetLabel for signal $s ($label) returned $labelResult',
-          );
-        }
 
-        final freqResult = edfSetSamplefrequency(handle, s, fs);
-        if (freqResult != 0) {
-          print(
-            'Warning: edfSetSamplefrequency for signal $s returned $freqResult',
-          );
-        }
-
-        final physMinResult = edfSetPhysicalMinimum(handle, s, physMin.toDouble());
-        if (physMinResult != 0) {
-          print(
-            'Warning: edfSetPhysicalMinimum for signal $s returned $physMinResult',
-          );
-        }
-
-        final physMaxResult = edfSetPhysicalMaximum(handle, s, physMax.toDouble());
-        if (physMaxResult != 0) {
-          print(
-            'Warning: edfSetPhysicalMaximum for signal $s returned $physMaxResult',
-          );
-        }
-
-        final digMinResult = edfSetDigitalMinimum(handle, s, digMin);
-        if (digMinResult != 0) {
-          print(
-            'Warning: edfSetDigitalMinimum for signal $s returned $digMinResult',
-          );
-        }
-
-        final digMaxResult = edfSetDigitalMaximum(handle, s, digMax);
-        if (digMaxResult != 0) {
-          print(
-            'Warning: edfSetDigitalMaximum for signal $s returned $digMaxResult',
-          );
-        }
-
-        // final unitPtr = unit.isEmpty ? ''.toNativeUtf8() : unit.toNativeUtf8();
-        // final unitResult = edfSetPhysicalDimension(handle, s, unitPtr);
-        // calloc.free(unitPtr);
-        // if (unitResult != 0) {
-        //   print(
-        //     'Warning: edfSetPhysicalDimension for signal $s returned $unitResult',
-        //   );
-        // }
+        edfSetSamplefrequency(handle, s, fs);
+        edfSetPhysicalMinimum(handle, s, physMin.toDouble());
+        edfSetPhysicalMaximum(handle, s, physMax.toDouble());
+        edfSetDigitalMinimum(handle, s, digMin);
+        edfSetDigitalMaximum(handle, s, digMax);
       }
 
       print('Writing data...');
-      // Duration and write loop: generate data
-      const seconds = 28800; // Further reduced for testing
-      final random = Math.Random();
 
-      // Determine total samples per record (sum of each fs)
-      int totalSamplesPerRecord = 0;
-      for (final sig in signals) {
-        totalSamplesPerRecord += sig.$3; // fs
-      }
-      print('Total samples per record: $totalSamplesPerRecord');
-
+      // Compute total samples per data record
+      int totalSamplesPerRecord = signals.fold(0, (sum, sig) => sum + sig.$3);
       final recordBuf = calloc<Int16>(totalSamplesPerRecord);
+
+      final seconds = collectedVitals.isNotEmpty
+          ? collectedVitals.length
+          : 28800; // 8 hours for mock data
+      final random = Math.Random();
 
       for (int sec = 0; sec < seconds; sec++) {
         int offset = 0;
-        for (int s = 0; s < signals.length; s++) {
-          final (label, unit, fs, physMin, physMax, digMin, digMax) =
-              signals[s];
+        VitalDataRecord? record =
+        collectedVitals.isNotEmpty ? collectedVitals[sec] : null;
 
-          // Generate mock waveform per signal
+        for (int s = 0; s < signals.length; s++) {
+          final (label, unit, fs, physMin, physMax, digMin, digMax) = signals[s];
+
           for (int i = 0; i < fs; i++) {
             double phys;
-            final t = i / fs;
 
-            switch (label) {
-              case 'spo2':
-                phys =
-                    96.0 +
-                    (sec % 5 == 4 ? -2.0 : 0.0) +
-                    (random.nextDouble() * 0.5);
-                break;
-              case 'pulse':
-                phys =
-                    65.0 + (sec % 10).toDouble() + (random.nextDouble() * 0.5);
-                break;
-              case 'ppg':
-                phys =
-                    50.0 * Math.sin(2 * Math.pi * t * 1.2) +
-                    20 * Math.cos(2 * Math.pi * t * 2.4);
-                break;
-              case 'derived_effort':
-                phys =
-                    50.0 * Math.sin(2 * Math.pi * t * 0.3) +
-                    random.nextDouble() * 5.0;
-                break;
-              case 'derived_flow':
-                phys =
-                    1500.0 * Math.sin(2 * Math.pi * t * 0.3) +
-                    random.nextDouble() * 10.0;
-                break;
-              case 'battery':
-                phys = 100.0 - (sec * 1.0 / seconds * 10);
-                break;
-              case 'charge_state':
+            if (record != null) {
+              // Map from collectedVitals
+              final recordMap = {
+                'spo2': record.spo2.toDouble(),
+                'pulse': record.heartRate.toDouble(),
+                'ppg': record.ppgSignal,
+                'ecg': record.ecgSignal,
+                'battery': record.battery.toDouble(),
+                'charge_state': record.chargeState.toDouble(),
+                'signal_quality': record.signalQuality.toDouble(),
+                'sensor_status': record.sensorStatus.toDouble(),
+                'derived_effort': record.derivedEffort,
+                'derived_flow': record.derivedFlow,
+                'heart_rate_varia': record.hrv,
+              };
+
+              final value = recordMap[label];
+              if (value is List<double>) {
+                phys = i < value.length ? value[i] : 0.0;
+              } else if (value is num) {
+                phys = value.toDouble();
+              } else {
                 phys = 0.0;
-                break;
-              case 'signal_quality':
-                phys = 95.0 - (random.nextDouble() * 5.0);
-                break;
-              case 'sensor_status':
-                phys = 0.0;
-                break;
-              case 'heart_rate_varia':
-              default:
-                phys = 15.0 + (sec % 5).toDouble() + random.nextDouble() * 2.0;
-                break;
+              }
+            } else {
+              // Generate mock waveform
+              final t = i / fs;
+              switch (label) {
+                case 'spo2':
+                  phys = 96.0 + (sec % 5 == 4 ? -2.0 : 0.0) + random.nextDouble() * 0.5;
+                  break;
+                case 'pulse':
+                  phys = 65.0 + (sec % 10).toDouble() + random.nextDouble() * 0.5;
+                  break;
+                case 'ppg':
+                  phys = 50.0 * Math.sin(2 * Math.pi * t * 1.2) +
+                      20 * Math.cos(2 * Math.pi * t * 2.4);
+                  break;
+                case 'derived_effort':
+                  phys = 50.0 * Math.sin(2 * Math.pi * t * 0.3) + random.nextDouble() * 5.0;
+                  break;
+                case 'derived_flow':
+                  phys = 1500.0 * Math.sin(2 * Math.pi * t * 0.3) + random.nextDouble() * 10.0;
+                  break;
+                case 'battery':
+                  phys = 100.0 - (sec * 1.0 / seconds * 10);
+                  break;
+                case 'charge_state':
+                  phys = 0.0;
+                  break;
+                case 'signal_quality':
+                  phys = 95.0 - (random.nextDouble() * 5.0);
+                  break;
+                case 'sensor_status':
+                  phys = 0.0;
+                  break;
+                case 'heart_rate_varia':
+                default:
+                  phys = 15.0 + (sec % 5).toDouble() + random.nextDouble() * 2.0;
+                  break;
+              }
             }
 
             // Map physical to digital
-            final mapped =
-                (digMin +
-                        (phys - physMin) *
-                            (digMax - digMin) /
-                            (physMax - physMin))
-                    .round();
+            final mapped = (digMin + (phys - physMin) * (digMax - digMin) / (physMax - physMin))
+                .round();
             recordBuf[offset + i] = mapped.clamp(-32768, 32767);
           }
+
           offset += fs;
         }
 
         final w = edfBlockwriteDigitalShortSamples(handle, recordBuf);
         if (w != 0) {
           print('edfBlockwriteDigitalShortSamples failed with $w at sec $sec');
-          // Continue writing other records even if one fails
         }
       }
 
@@ -628,10 +594,10 @@ class EDFHelper {
         print('Warning: closing EDF handle returned $closeRes');
       }
 
-      print('Standard EDF file written successfully at $filePath');
+      print('EDF file written successfully at $filePath');
       return File(filePath);
     } catch (e) {
-      print('Error creating standard EDF: $e');
+      print('Error creating EDF: $e');
       return null;
     }
   }
@@ -641,94 +607,94 @@ class EDFHelper {
     // The same signal definitions as in the original FFI code
     final signals = <EdfSignal>[
       (
-        label: 'spo2',
-        unit: '%',
-        fs: 1,
-        physMin: 0.0,
-        physMax: 100.0,
-        digMin: 0,
-        digMax: 100,
+      label: 'spo2',
+      unit: '%',
+      fs: 1,
+      physMin: 0.0,
+      physMax: 100.0,
+      digMin: 0,
+      digMax: 100,
       ),
       (
-        label: 'pulse',
-        unit: 'bpm',
-        fs: 1,
-        physMin: 0.0,
-        physMax: 100.0,
-        digMin: 0,
-        digMax: 100,
+      label: 'pulse',
+      unit: 'bpm',
+      fs: 1,
+      physMin: 0.0,
+      physMax: 100.0,
+      digMin: 0,
+      digMax: 100,
       ),
       (
-        label: 'battery',
-        unit: '%',
-        fs: 1,
-        physMin: 0.0,
-        physMax: 100.0,
-        digMin: 0,
-        digMax: 100,
+      label: 'battery',
+      unit: '%',
+      fs: 1,
+      physMin: 0.0,
+      physMax: 100.0,
+      digMin: 0,
+      digMax: 100,
       ),
       (
-        label: 'charge_state',
-        unit: '',
-        fs: 1,
-        physMin: 0,
-        physMax: 100,
-        digMin: 0,
-        digMax: 100,
+      label: 'charge_state',
+      unit: '',
+      fs: 1,
+      physMin: 0,
+      physMax: 100,
+      digMin: 0,
+      digMax: 100,
       ),
       (
-        label: 'signal_quality',
-        unit: '%',
-        fs: 1,
-        physMin: 0.0,
-        physMax: 100.0,
-        digMin: 0,
-        digMax: 100,
+      label: 'signal_quality',
+      unit: '%',
+      fs: 1,
+      physMin: 0.0,
+      physMax: 100.0,
+      digMin: 0,
+      digMax: 100,
       ),
       (
-        label: 'sensor_status',
-        unit: '',
-        fs: 1,
-        physMin: 0,
-        physMax: 100,
-        digMin: 0,
-        digMax: 100,
+      label: 'sensor_status',
+      unit: '',
+      fs: 1,
+      physMin: 0,
+      physMax: 100,
+      digMin: 0,
+      digMax: 100,
       ),
       (
-        label: 'heart_rate_varia',
-        unit: 'ms',
-        fs: 1,
-        physMin: -100,
-        physMax: 100,
-        digMin: -100,
-        digMax: 100,
+      label: 'heart_rate_varia',
+      unit: 'ms',
+      fs: 1,
+      physMin: -100,
+      physMax: 100,
+      digMin: -100,
+      digMax: 100,
       ),
       (
-        label: 'ppg',
-        unit: 'mV',
-        fs: 125,
-        physMin: 0,
-        physMax: 255,
-        digMin: 0,
-        digMax: 255,
+      label: 'ppg',
+      unit: 'mV',
+      fs: 125,
+      physMin: 0,
+      physMax: 255,
+      digMin: 0,
+      digMax: 255,
       ),
       (
-        label: 'derived_effort',
-        unit: 'units',
-        fs: 10,
-        physMin: -100.0,
-        physMax: 100.0,
-        digMin: -100,
-        digMax: 100,
+      label: 'derived_effort',
+      unit: 'units',
+      fs: 10,
+      physMin: -100.0,
+      physMax: 100.0,
+      digMin: -100,
+      digMax: 100,
       ),
       (
-        label: 'derived_flow',
-        unit: 'LPM',
-        fs: 10,
-        physMin: -100,
-        physMax: 100,
-        digMin: -100,
-        digMax: 100,
+      label: 'derived_flow',
+      unit: 'LPM',
+      fs: 10,
+      physMin: -100,
+      physMax: 100,
+      digMin: -100,
+      digMax: 100,
       ),
     ];
 
@@ -762,7 +728,10 @@ class EDFHelper {
       headerBuffer.add(
         ascii.encode(
           _padString(
-            '${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${(now.year % 100).toString().padLeft(2, '0')}',
+            '${now.day.toString().padLeft(2, '0')}.${now.month
+                .toString()
+                .padLeft(2, '0')}.${(now.year % 100).toString().padLeft(
+                2, '0')}',
             8,
           ),
         ),
@@ -771,7 +740,9 @@ class EDFHelper {
       headerBuffer.add(
         ascii.encode(
           _padString(
-            '${now.hour.toString().padLeft(2, '0')}.${now.minute.toString().padLeft(2, '0')}.${now.second.toString().padLeft(2, '0')}',
+            '${now.hour.toString().padLeft(2, '0')}.${now.minute
+                .toString()
+                .padLeft(2, '0')}.${now.second.toString().padLeft(2, '0')}',
             8,
           ),
         ),
@@ -873,32 +844,32 @@ class EDFHelper {
               case 'spo2':
                 phys =
                     96.0 +
-                    (sec % 5 == 4 ? -2.0 : 0.0) +
-                    (random.nextDouble() * 0.5);
+                        (sec % 5 == 4 ? -2.0 : 0.0) +
+                        (random.nextDouble() * 0.5);
                 break;
               case 'pulse':
                 phys =
                     65.0 + (sec % 10).toDouble() + (random.nextDouble() * 0.5);
                 break;
               case 'ppg':
-                // Simulated oscillatory waveform at ~1.2Hz and its harmonic
+              // Simulated oscillatory waveform at ~1.2Hz and its harmonic
                 phys =
                     500.0 * Math.sin(2 * Math.pi * t * 1.2) +
-                    200.0 * Math.cos(2 * Math.pi * t * 2.4) +
-                    random.nextDouble() * 10.0;
+                        200.0 * Math.cos(2 * Math.pi * t * 2.4) +
+                        random.nextDouble() * 10.0;
                 break;
               case 'derived_effort':
                 phys =
                     50.0 * Math.sin(2 * Math.pi * t * 0.3) +
-                    random.nextDouble() * 5.0;
+                        random.nextDouble() * 5.0;
                 break;
               case 'derived_flow':
                 phys =
                     1500.0 * Math.sin(2 * Math.pi * t * 0.3) +
-                    random.nextDouble() * 10.0;
+                        random.nextDouble() * 10.0;
                 break;
               case 'battery':
-                // Simulate battery decrease over the total duration
+              // Simulate battery decrease over the total duration
                 phys =
                     signal.physMax - (sec * 1.0 / numberOfDataRecords) * 10.0;
                 break;
@@ -950,13 +921,13 @@ class EDFHelper {
 
 // Define the structure for a single EDF signal using a Dart Record
 typedef EdfSignal = ({
-  String label,
-  String unit,
-  int fs,
-  double physMin,
-  double physMax,
-  int digMin,
-  int digMax,
+String label,
+String unit,
+int fs,
+double physMin,
+double physMax,
+int digMin,
+int digMax,
 });
 
 /// Ensures a string is padded on the right with spaces to meet the exact required length
