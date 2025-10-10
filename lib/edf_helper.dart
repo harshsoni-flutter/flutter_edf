@@ -14,6 +14,8 @@ class EDFHelper {
   static Future<File?> createMultiSignalEdf(
       String filePath, {
         List<VitalDataRecord> collectedVitals = const [],
+        String patientName = "Patient_O2Ring",
+        String recordingName = "O2Ring Recording"
       }) async {
     try {
       final pathPtr = filePath.toNativeUtf8();
@@ -63,11 +65,11 @@ class EDFHelper {
       edfSetDatarecordDuration(handle, 1);
 
       // Minimal metadata
-      final patientPtr = 'SleepMD'.toNativeUtf8();
+      final patientPtr = patientName.toNativeUtf8();
       edfSetPatientname(handle, patientPtr);
       calloc.free(patientPtr);
 
-      final recPtr = 'O2 Ring multi-signal'.toNativeUtf8();
+      final recPtr = recordingName.toNativeUtf8();
       edfSetRecordingAdditional(handle, recPtr);
       calloc.free(recPtr);
 
@@ -406,6 +408,8 @@ class EDFHelper {
   static Future<File?> createO2RingEdf(
       String filePath, {
         List<VitalDataRecord> collectedVitals = const [],
+        String patientName = "Patient_O2Ring",
+        String recordingName = "O2Ring Recording"
       }) async {
     try {
       // Ensure directory exists
@@ -464,11 +468,11 @@ class EDFHelper {
       edfSetDatarecordDuration(handle, 1);
 
       // Set patient metadata
-      final patientPtr = 'Patient_O2Ring'.toNativeUtf8();
+      final patientPtr = patientName.toNativeUtf8();
       edfSetPatientname(handle, patientPtr);
       calloc.free(patientPtr);
 
-      final recPtr = 'O2Ring Recording'.toNativeUtf8();
+      final recPtr = recordingName.toNativeUtf8();
       edfSetRecordingAdditional(handle, recPtr);
       calloc.free(recPtr);
 
