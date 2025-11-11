@@ -33,4 +33,21 @@ class VitalDataRecord {
     this.derivedFlow = 0.0,
   });
 
+  /// Converts this object to a JSON-compatible map.
+  Map<String, dynamic> toJson() {
+    return {
+      'spo2': spo2,
+      'heartRate': heartRate,
+      'ppgSignal': ppgSignal,
+      'ecgSignal': ecgSignal,
+      'battery': battery,
+      'chargeState': chargeState,
+      'signalQuality': signalQuality,
+      'sensorStatus': sensorStatus,
+      'hrv': hrv,
+      'derivedEffort': derivedEffort,
+      'derivedFlow': derivedFlow,
+    };
+  }
+
 }
