@@ -1,5 +1,3 @@
-import 'dart:math';
-import 'dart:math' as Math;
 
 /// Holds a single record of vital signs data from the device.
 class VitalDataRecord {
