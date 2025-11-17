@@ -21,24 +21,42 @@ class EDFHelper {
   }) async {
     try {
       final pathPtr = filePath.toNativeUtf8();
+      //
+      // // --- FIX 2: Standardized Channel Labels ---
+      // // All labels are now lowercase, with spaces/hyphens replaced by underscores.
+      // final signals = [
+      //   // label, unit, fs, physMin, physMax, digMin, digMax
+      //   ('eeg_o1_a2', 'uV', 200, -300.0, 300.0, 0, 4095),
+      //   ('eeg_o2_a1', 'uV', 200, -300.0, 300.0, 0, 4095),
+      //   ('eog_roc_a2', 'uV', 200, -300.0, 300.0, 0, 4095),
+      //   ('snore', 'dBFS', 8000, -100.0, 100.0, 0, 4095),
+      //   ('flow_patient', 'LPM', 25, -3276.8, 3276.7, -32768, 32767),
+      //   ('effort_tho', 'uV', 10, -100.0, 100.0, 0, 4095),
+      //   ('spo2', '%', 1, 0.0, 102.3, 0, 1023),
+      //   ('spo2_2', '%', 1, 0.0, 102.3, 0, 1023),
+      //   ('body', 'N/A', 1, 0.0, 255.0, 0, 255),
+      //   ('pulse_rate', 'bpm', 1, 0.0, 1023.0, 0, 1023),
+      //   ('pulse_rate_2', 'bpm', 1, 0.0, 1023.0, 0, 1023),
+      //   ('ppg', 'N/A', 100, -100.0, 100.0, 0, 255),
+      //   ('ppg_2', 'N/A', 100, -100.0, 100.0, -32768, 32767),
+      // ];
 
-      // --- FIX 2: Standardized Channel Labels ---
-      // All labels are now lowercase, with spaces/hyphens replaced by underscores.
+      // Define signals: (label, unit, fs, physMin, physMax, digMin, digMax)
+      // All labels are now lowercase/underscore to match the example file.
       final signals = [
-        // label, unit, fs, physMin, physMax, digMin, digMax
-        ('eeg_o1_a2', 'uV', 200, -300.0, 300.0, 0, 4095),
-        ('eeg_o2_a1', 'uV', 200, -300.0, 300.0, 0, 4095),
-        ('eog_roc_a2', 'uV', 200, -300.0, 300.0, 0, 4095),
-        ('snore', 'dBFS', 8000, -100.0, 100.0, 0, 4095),
-        ('flow_patient', 'LPM', 25, -3276.8, 3276.7, -32768, 32767),
-        ('effort_tho', 'uV', 10, -100.0, 100.0, 0, 4095),
-        ('spo2', '%', 1, 0.0, 102.3, 0, 1023),
-        ('spo2_2', '%', 1, 0.0, 102.3, 0, 1023),
-        ('body', 'N/A', 1, 0.0, 255.0, 0, 255),
-        ('pulse_rate', 'bpm', 1, 0.0, 1023.0, 0, 1023),
-        ('pulse_rate_2', 'bpm', 1, 0.0, 1023.0, 0, 1023),
-        ('ppg', 'N/A', 100, -100.0, 100.0, 0, 255),
-        ('ppg_2', 'N/A', 100, -100.0, 100.0, -32768, 32767),
+        ('spo2', '%', 1, 0.0, 100.0, 0, 100),
+        ('pulse', 'bpm', 1, 0.0, 250.0, 0, 250),
+        ('battery', '%', 10, 0.0, 100.0, 0, 100),
+        // ('charge_state', '', 10, 0.0, 100, 0, 100),
+        ('signal_quality', '%', 10, 0.0, 100, 0, 100),
+        // ('sensor_status', '', 10, 0.0, 100, 0, 100),
+        // Mapped HRV and Derived Effort to the example's combined label
+        ('heart_rate_variaderived_effort', '', 1, 0.0, 255.0, 0, 255),
+        // PPG uses standard 16-bit digital range (Crucial fix for parser)
+        ('ppg', 'mV', 100, -100.0, 100.0, 0, 255),
+        ('derived_flow', '', 10, 0, 255, 0, 255),
+        // Re-added the 10th signal with the correct lowercase label
+        ('derived_effort', '', 10, 0, 255, 0, 255),
       ];
 
       // --- FIX 1: File Type ---
@@ -87,8 +105,8 @@ class EDFHelper {
         calloc.free(labelPtr);
 
         edfSetSamplefrequency(handle, s, fs);
-        edfSetPhysicalMinimum(handle, s, physMin);
-        edfSetPhysicalMaximum(handle, s, physMax);
+        edfSetPhysicalMinimum(handle, s, physMin.toDouble());
+        edfSetPhysicalMaximum(handle, s, physMax.toDouble());
         edfSetDigitalMinimum(handle, s, digMin);
         edfSetDigitalMaximum(handle, s, digMax);
 
@@ -116,24 +134,27 @@ class EDFHelper {
           final (label, unit, fs, physMin, physMax, digMin, digMax) = signals[s];
 
           for (int i = 0; i < fs; i++) {
-            double phys;
+            double phys = 0;
 
             if (record != null) {
               // Cast any dynamic lists to List<double> to avoid type issues
               final ppgSignal = record.ppgSignal.cast<double>();
               final ecgSignal = record.ecgSignal.cast<double>();
 
-              // --- FIX 3: Updated Data Mapping ---
-              // The keys in this map MUST match the new labels from the 'signals' array.
+              // Map ALL fields from VitalDataRecord to the recordMap
+              // The keys in this map MUST match the labels from the 'signals' array.
               final recordMap = {
                 'spo2': record.spo2.toDouble(),
-                'pulse_rate': record.heartRate.toDouble(),
+                'pulse': record.heartRate.toDouble(),
                 'ppg': ppgSignal,
-                'ppg_2': ppgSignal,
-                // if you have multiple channels
-                // NOTE: You are not mapping your other 'VitalDataRecord' fields
-                // (e.g., eeg, eog) to the corresponding EDF channels.
-                // You will need to add them to this map if you want real data there.
+                'ecg': ecgSignal,
+                'battery': record.battery.toDouble(),
+                'charge_state': record.chargeState.toDouble(),
+                'signal_quality': record.signalQuality.toDouble(),
+                'sensor_status': record.sensorStatus.toDouble(),
+                'derived_effort': record.derivedEffort,
+                'derived_flow': record.derivedFlow,
+                'heart_rate_variaderived_effort': record.hrv,
               };
 
               final value = recordMap[label];
@@ -144,58 +165,14 @@ class EDFHelper {
               } else {
                 phys = 0.0; // Default for unmapped channels
               }
-            } else {
-              // Mock waveform generation
-              final t = i / fs;
-              // --- FIX 3: Updated Mock Data Mapping ---
-              // The 'case' statements MUST match the new labels.
-              switch (label) {
-                case 'eeg_o1_a2':
-                case 'eeg_o2_a1':
-                case 'eog_roc_a2':
-                  phys = 50.0 * Math.sin(2 * Math.pi * t * 10.0);
-                  break;
-                case 'snore':
-                  phys = (i % 200 < 5) ? 80.0 : 10.0;
-                  break;
-                case 'flow_patient':
-                  phys = 500.0 * Math.sin(2 * Math.pi * t * 0.3);
-                  break;
-                case 'effort_tho':
-                  phys = 50.0 * Math.sin(2 * Math.pi * t * 0.3 + 1.0);
-                  break;
-                case 'spo2':
-                  phys = 96.0 + ((sec % 5) == 4 ? -1.0 : 0.0);
-                  break;
-                case 'spo2_2':
-                  phys = 95.5 + ((sec % 6) == 5 ? -1.0 : 0.0);
-                  break;
-                case 'body':
-                  phys = (sec < seconds / 2) ? 96.0 : 128.0;
-                  break;
-                case 'pulse_rate':
-                  phys = 65.0 + (sec % 10);
-                  break;
-                case 'pulse_rate_2':
-                  phys = 66.0 + (sec % 9);
-                  break;
-                case 'ppg':
-                  phys = 60.0 * Math.sin(2 * Math.pi * t * 1.2);
-                  break;
-                case 'ppg_2':
-                  phys = 55.0 * Math.sin(2 * Math.pi * t * 1.2 + 0.5);
-                  break;
-                default:
-                  phys = 0.0;
-              }
             }
 
             // Map physical to digital
             final mapped = (digMin +
                 (phys - physMin) * (digMax - digMin) / (physMax - physMin))
                 .round();
-            // Clamp to the full 16-bit range, as digMin/digMax can vary
-            recordBuf[offset + i] = mapped.clamp(-32768, 32767);
+            // Clamp to the signal's specified digital range
+            recordBuf[offset + i] = mapped.clamp(digMin, digMax);
           }
 
           offset += fs;
@@ -445,9 +422,9 @@ class EDFHelper {
         ('spo2', '%', 1, 0.0, 100.0, 0, 100),
         ('pulse', 'bpm', 1, 0.0, 250.0, 0, 250),
         ('battery', '%', 10, 0.0, 100.0, 0, 100),
-        ('charge_state', '', 10, 0.0, 100, 0, 100),
+        // ('charge_state', '', 10, 0.0, 100, 0, 100),
         ('signal_quality', '%', 10, 0.0, 100, 0, 100),
-        ('sensor_status', '', 10, 0.0, 100, 0, 100),
+        // ('sensor_status', '', 10, 0.0, 100, 0, 100),
         // Mapped HRV and Derived Effort to the example's combined label
         ('heart_rate_variaderived_effort', '', 1, 0.0, 255.0, 0, 255),
         // PPG uses standard 16-bit digital range (Crucial fix for parser)
