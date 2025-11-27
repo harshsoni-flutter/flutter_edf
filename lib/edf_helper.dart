@@ -76,7 +76,7 @@ class EDFHelper {
       }
 
       // Set start time and datarecord duration (1 second)
-      final start = DateTime.now();
+      final start = DateTime.now().toUtc();
       edfSetStartdatetime(
         handle,
         start.year,
@@ -276,7 +276,7 @@ class EDFHelper {
       }
 
       // Set the start date and time of the recording.
-      final now = DateTime.now();
+      final now = DateTime.now().toUtc();
       edfSetStartdatetime(
         hdl,
         now.year,
@@ -450,7 +450,7 @@ class EDFHelper {
       }
 
       // Set start time
-      final start = DateTime.now();
+      final start = DateTime.now().toUtc();
       edfSetStartdatetime(
         handle,
         start.year,
@@ -670,7 +670,7 @@ class EDFHelper {
     final numberOfSignals = signals.length;
     final headerSize = 256 + numberOfSignals * 256; // Fixed size for EDF header
 
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     final random = Math.Random();
 
     // Initialize file sink
