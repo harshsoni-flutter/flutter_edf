@@ -6,6 +6,7 @@ class VitalDataRecord {
   final int heartRate;  // Maps to 'pulse' signal
   final List<double> ppgSignal;
   final List<double> ecgSignal;
+  final List<List<double>> ppgInternalSignal;
 
   // New signals added to match the 10-signal EDF header:
   final int battery;
@@ -21,12 +22,13 @@ class VitalDataRecord {
     this.heartRate = 70,
     this.ppgSignal = const [],
     this.ecgSignal = const [],
+    this.ppgInternalSignal = const [],
     // Defaults for new fields
     this.battery = 90,
     this.chargeState = 0, // 0=Discharging, 1=Charging
     this.signalQuality = 100,
     this.sensorStatus = 0, // 0=Attached
-    this.hrv = 50.0,
+    this.hrv = 0,
     this.derivedEffort = 0.0,
     this.derivedFlow = 0.0,
   });
@@ -45,7 +47,36 @@ class VitalDataRecord {
       'hrv': hrv,
       'derivedEffort': derivedEffort,
       'derivedFlow': derivedFlow,
+      'ppgInternalSignal': ppgInternalSignal,
     };
   }
 
+  VitalDataRecord copyWith({
+    int? spo2,
+    int? heartRate,
+    List<double>? ppgSignal,
+    List<double>? ecgSignal,
+    int? battery,
+    int? chargeState,
+    int? signalQuality,
+    int? sensorStatus,
+    double? hrv,
+    double? derivedEffort,
+    double? derivedFlow,
+  }) {
+    return VitalDataRecord(
+      spo2: spo2 ?? this.spo2,
+      heartRate: heartRate ?? this.heartRate,
+      ppgSignal: ppgSignal ?? this.ppgSignal,
+      ecgSignal: ecgSignal ?? this.ecgSignal,
+      battery: battery ?? this.battery,
+      chargeState: chargeState ?? this.chargeState,
+      signalQuality: signalQuality ?? this.signalQuality,
+      sensorStatus: sensorStatus ?? this.sensorStatus,
+      hrv: hrv ?? this.hrv,
+      derivedEffort: derivedEffort ?? this.derivedEffort,
+      derivedFlow: derivedFlow ?? this.derivedFlow,
+      ppgInternalSignal: ppgInternalSignal ?? this.ppgInternalSignal,
+    );
+  }
 }

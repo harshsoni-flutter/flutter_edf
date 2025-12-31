@@ -20,10 +20,10 @@ A new Flutter project.
   # Required for C/C++ libraries in FFI plugins
   s.compiler_flags = '-fembed-bitcode'
 
-  # Flutter.framework does not contain a i386 slice.
-  s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386',
-   'OTHER_CFLAGS' => '$(inherited) -Wno-int-conversion -Wno-pointer-sign',
-       'OTHER_LDFLAGS' => '$(inherited) -lsqlite3 -lz' # Add any required system libraries (like zlib if edflib uses it)}
+  s.pod_target_xcconfig = {
+    'FRAMEWORK_SEARCH_PATHS' => '$(inherited)',
+    'OTHER_LDFLAGS' => '$(inherited) -lsqlite3 -lz'
+  }
   s.swift_version = '5.0'
 
 
