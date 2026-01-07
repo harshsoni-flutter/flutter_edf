@@ -1,19 +1,17 @@
-
 /// Holds a single record of vital signs data from the device.
 class VitalDataRecord {
   // Signals from user's original data:
   final int spo2;
-  final int heartRate;  // Maps to 'pulse' signal
+  final int heartRate; // Maps to 'pulse' signal
   final List<double> ppgSignal;
   final List<double> ecgSignal;
-  final List<List<double>> ppgInternalSignal;
 
   // New signals added to match the 10-signal EDF header:
   final int battery;
   final int chargeState;
   final int signalQuality;
   final int sensorStatus;
-  final double hrv;             // heart_rate_varia
+  final double hrv; // heart_rate_varia
   final double derivedEffort;
   final double derivedFlow;
 
@@ -22,7 +20,6 @@ class VitalDataRecord {
     this.heartRate = 70,
     this.ppgSignal = const [],
     this.ecgSignal = const [],
-    this.ppgInternalSignal = const [],
     // Defaults for new fields
     this.battery = 90,
     this.chargeState = 0, // 0=Discharging, 1=Charging
@@ -47,7 +44,6 @@ class VitalDataRecord {
       'hrv': hrv,
       'derivedEffort': derivedEffort,
       'derivedFlow': derivedFlow,
-      'ppgInternalSignal': ppgInternalSignal,
     };
   }
 
@@ -76,7 +72,6 @@ class VitalDataRecord {
       hrv: hrv ?? this.hrv,
       derivedEffort: derivedEffort ?? this.derivedEffort,
       derivedFlow: derivedFlow ?? this.derivedFlow,
-      ppgInternalSignal: ppgInternalSignal ?? this.ppgInternalSignal,
     );
   }
 }
