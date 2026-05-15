@@ -10,6 +10,8 @@ add_library(edflib SHARED
         edflib.c
 )
 
+target_link_options(edflib PRIVATE "-Wl,-z,max-page-size=16384")
+
 # include headers
 target_include_directories(edflib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
